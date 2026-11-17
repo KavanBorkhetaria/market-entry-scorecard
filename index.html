@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EV Charging Market-Entry Scorecard</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<script>
+/* =====================================================================
+   CONFIG  ·  EDIT EVERYTHING IN THIS BLOCK, NOTHING ELSE IS NEEDED
+   ---------------------------------------------------------------------
+   markets   : raw input data per country (EAFO and Eurostat, 2025).
+               Add or remove rows freely (min. 2 markets).
+   criteria  : the 5 scoring dimensions.
+     id             short unique key
+     name           label shown in the app (rename freely)
+     unit           what the raw number measures
+     value          which market field(s) the criterion reads.
+                    Whitespace is derived: BEV stock / public chargers.
+     higherIsBetter true  = a bigger raw value is more attractive
+                    false = a smaller raw value is more attractive
+     format         how the raw value is displayed in the table
+   scenarios : named weight sets in % (each should sum to 100).
+               The first one is loaded by default and by "Reset".
+   ===================================================================== */
+const CONFIG = {
+  title:    "EV Charging Market-Entry Scorecard",
+  subtitle: "Which of 10 European markets should an EV-charging operator enter next?",
+  author:   "Kavan Borkhetaria",
+  dataNote: "Source: EAFO and Eurostat (2025), own analysis. Weighted min-max scorecard.",
+
+  markets: [
+    // name            BEV stock   public chargers  BEV stock growth  GDP/capita €  electricity €/kWh
+    { name: "Germany",     bevStock: 2144492, chargers: 200830, growth:  0.2555, gdpPerCap: 43750, elecPrice: 0.2625 },
+    { name: "France",      bevStock: 1702762, chargers: 186717, growth:  0.1974, gdpPerCap: 38360, elecPrice: 0.1785 },
+    { name: "Netherlands", bevStock:  730016, chargers: 202833, growth:  0.1084, gdpPerCap: 51500, elecPrice: 0.2692 },
+    { name: "Norway",      bevStock:  994618, chargers:  26949, growth: -0.1084, gdpPerCap: 66720, elecPrice: 0.1605 },
+    { name: "Sweden",      bevStock:  468278, chargers:  62517, growth:  0.1625, gdpPerCap: 49250, elecPrice: 0.1771 },
+    { name: "Belgium",     bevStock:  458742, chargers:  98707, growth:  0.2849, gdpPerCap: 44650, elecPrice: 0.2714 },
+    { name: "Austria",     bevStock:  275150, chargers:  34706, growth:  0.1409, gdpPerCap: 45390, elecPrice: 0.2539 },
+    { name: "Italy",       bevStock:  404515, chargers:  70039, growth:  0.2036, gdpPerCap: 33080, elecPrice: 0.2190 },
+    { name: "Spain",       bevStock:  317773, chargers:  46902, growth:  0.0374, gdpPerCap: 28320, elecPrice: 0.1840 },
+    { name: "Denmark",     bevStock:  562298, chargers:  50338, growth:  0.4034, gdpPerCap: 60390, elecPrice: 0.1685 }
+  ],
+
+  criteria: [
+    { id: "size",       name: "Market size",   unit: "BEV stock FY2025",                value: m => m.bevStock,              higherIsBetter: true,  format: v => (v / 1e6).toFixed(2) + "M" },
+    { id: "growth",     name: "Growth",        unit: "BEV stock growth, 2025 vs 2024",  value: m => m.growth,                higherIsBetter: true,  format: v => (v * 100).toFixed(1) + "%" },
+    { id: "whitespace", name: "Whitespace",    unit: "EVs per public charger",          value: m => m.bevStock / m.chargers, higherIsBetter: true,  format: v => v.toFixed(1) },
+    { id: "afford",     name: "Affordability", unit: "GDP per capita, €",               value: m => m.gdpPerCap,             higherIsBetter: true,  format: v => (v / 1000).toFixed(1) + "k" },
+    { id: "runcost",    name: "Running cost",  unit: "Electricity price, €/kWh",        value: m => m.elecPrice,             higherIsBetter: false, format: v => v.toFixed(3) }
+  ],
+
+  scenarios: [
+    // name                 size  growth  whitespace  afford  runcost
+    { name: "Growth-led",         weights: [25,   30,     20,         12.5,   12.5] },
+    { name: "Whitespace-skeptic", weights: [30,   30,     10,         15,     15  ] },
+    { name: "Equal",              weights: [20,   20,     20,         20,     20  ] }
+  ],
+
+  /* Sensitivity test: how many percentage points each weight is nudged
+     up and down to check whether the #1 market changes. */
+  sensitivityStep: 10
+};
+/* ============================ END CONFIG ============================ */
+</script>
+<style>
+/* Layout: answer-first banner on top, then weights panel (left) beside
+   the live ranking (right); stacks to one column on phones.            */
+:root {
+  --bg: #f3f5f4;  --surface: #ffffff; --surface-2: #eef1ef;
+  --fg: #121715;  --muted: #5a6560;   --line: #dbe1de;
+  --accent: #0b6e4f; --accent-soft: #e2f1eb; --on-accent: #ffffff;
+  --ok: #0b7a52; --ok-bg: #e0f3ea; --warn: #9a5b00; --warn-bg: #fdf0d9; --bad: #b4233f; --bad-bg: #fbe4e9;
+  --c1: #3a6fd8; --c2: #d98a1f; --c3: #7c5cd6; --c4: #d24d6a; --c5: #2a96a4;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1110; --surface: #151a18; --surface-2: #1c2321;
+  --fg: #e7ece9; --muted: #95a29c; --line: #2a3330;
+  --accent: #3cc48f; --accent-soft: #163329; --on-accent: #06140e;
+  --ok: #4fd39c; --ok-bg: #163329; --warn: #f2b45a; --warn-bg: #3a2a10; --bad: #f37a92; --bad-bg: #3a1720;
+  --c1: #6f9bf0; --c2: #f0a648; --c3: #a38af0; --c4: #f07a94; --c5: #4fc2cf;
+  color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #0d1110; --surface: #151a18; --surface-2: #1c2321;
+  --fg: #e7ece9; --muted: #95a29c; --line: #2a3330;
+  --accent: #3cc48f; --accent-soft: #163329; --on-accent: #06140e;
+  --ok: #4fd39c; --ok-bg: #163329; --warn: #f2b45a; --warn-bg: #3a2a10; --bad: #f37a92; --bad-bg: #3a1720;
+  --c1: #6f9bf0; --c2: #f0a648; --c3: #a38af0; --c4: #f07a94; --c5: #4fc2cf;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-block: 28px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 20px;
+}
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* ---------- Header ---------- */
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 8px 24px; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { margin: 2px 0 0; font-size: clamp(22px, 3.2vw, 28px); letter-spacing: -.02em; line-height: 1.15; text-wrap: balance; }
+.sub { margin: 4px 0 0; color: var(--muted); }
+.method { font-size: 13px; color: var(--muted); max-width: 46ch; margin: 0; }
+
+/* ---------- Answer-first banner ---------- */
+.banner {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  overflow: hidden;
+}
+.banner-main { padding: 22px 24px; display: grid; gap: 6px; align-content: start; border-right: 1px solid var(--line); }
+.banner-label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+.banner-winner { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+.banner-winner strong { font-size: clamp(30px, 5vw, 44px); letter-spacing: -.03em; line-height: 1.05; }
+.banner-score { font-size: 18px; color: var(--muted); }
+.banner-score b { color: var(--fg); font-weight: 700; }
+.banner-why { color: var(--muted); font-size: 14px; }
+.scen-ranks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.chip b { color: var(--fg); }
+.banner-side { padding: 22px 24px; display: grid; gap: 10px; align-content: start; background: var(--surface-2); }
+.side-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; font-size: 14px; }
+.side-row span:first-child { color: var(--muted); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+}
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.ok   { color: var(--ok);   background: var(--ok-bg); }
+.pill.warn { color: var(--warn); background: var(--warn-bg); }
+.pill.bad  { color: var(--bad);  background: var(--bad-bg); }
+.flips { margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
+.flips b { color: var(--fg); font-weight: 600; }
+
+/* ---------- Main grid ---------- */
+.grid { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+.panel-head h2 { margin: 0; font-size: 15px; letter-spacing: -.01em; }
+
+/* ---------- Weights panel ---------- */
+.weights { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+.presets { padding: 14px 18px 4px; display: grid; gap: 8px; }
+.presets-label { font-size: 12px; color: var(--muted); font-weight: 600; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.sliders { padding: 4px 18px 4px; display: grid; }
+.slider { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.slider:last-child { border-bottom: 0; }
+.slider-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.slider-name { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.slider-unit { font-size: 12px; color: var(--muted); }
+.slider-val { font-size: 15px; font-weight: 700; min-width: 5ch; text-align: right; }
+input[type=range] { width: 100%; margin: 0; accent-color: var(--accent); height: 22px; cursor: pointer; }
+input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+.total { margin: 0 18px; padding: 12px 14px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 14px; }
+.total.ok { background: var(--ok-bg); color: var(--ok); }
+.total.warn { background: var(--warn-bg); color: var(--warn); }
+.total b { font-size: 18px; }
+.total-note { font-size: 12px; color: var(--muted); margin: 8px 18px 0; min-height: 1.5em; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 18px 18px; }
+button {
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  padding: 7px 11px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--fg);
+}
+button:hover { background: var(--surface-2); }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- Ranking table ---------- */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; white-space: nowrap; }
+th.r, td.r { text-align: right; }
+th .dir { text-transform: none; letter-spacing: 0; font-weight: 500; display: block; font-size: 11px; }
+td.rank { width: 36px; font-weight: 700; color: var(--muted); }
+tr.top td { background: var(--accent-soft); }
+tr.top td.rank { color: var(--accent); }
+td.market { font-weight: 600; white-space: nowrap; }
+.delta { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.delta.up { color: var(--ok); } .delta.down { color: var(--bad); } .delta.same { color: var(--muted); }
+td.scorecell { min-width: 190px; }
+.score-wrap { display: flex; align-items: center; gap: 10px; }
+.bar { flex: 1; height: 10px; border-radius: 3px; background: var(--surface-2); display: flex; overflow: hidden; min-width: 80px; }
+.bar i { display: block; height: 100%; transition: width .25s ease; }
+.score-num { font-weight: 700; min-width: 4.5ch; text-align: right; }
+td.raw { color: var(--muted); white-space: nowrap; }
+.foot { padding: 12px 18px 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 900px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .weights { position: static; }
+  .banner { grid-template-columns: minmax(0, 1fr); }
+  .banner-main { border-right: 0; border-bottom: 1px solid var(--line); }
+}
+@media (max-width: 640px) {
+  .col-raw { display: none; }             /* hide raw-value columns on phones */
+  td.scorecell { min-width: 0; }
+  th, td { padding: 10px 8px; }
+  .banner-main, .banner-side { padding: 18px; }
+}
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <div class="eyebrow">Market-entry decision tool</div>
+      <h1 id="app-title"></h1>
+      <p class="sub" id="app-sub"></p>
+    </div>
+    <p class="method">Each criterion is min-max normalised to 0 to 100 across the 10 markets (inverted for electricity price, where lower is better), then combined as a weighted sum.</p>
+  </header>
+
+  <!-- Answer-first recommendation: always shows the current #1 -->
+  <section class="banner" aria-live="polite">
+    <div class="banner-main">
+      <div class="banner-label">Recommendation</div>
+      <div class="banner-winner">
+        <strong id="win-name">–</strong>
+        <span class="banner-score">Score <b class="num" id="win-score">–</b> / 100</span>
+      </div>
+      <div class="banner-why" id="win-why"></div>
+      <div class="scen-ranks" id="scen-ranks"></div>
+    </div>
+    <div class="banner-side">
+      <div class="side-row"><span>Robustness of #1</span><span id="sens-pill" class="pill ok">–</span></div>
+      <div class="side-row"><span>Lead over #2</span><span class="num" id="lead">–</span></div>
+      <ul class="flips" id="flips"></ul>
+    </div>
+  </section>
+
+  <div class="grid">
+    <!-- Weights panel -->
+    <section class="panel weights" aria-labelledby="w-title">
+      <div class="panel-head"><h2 id="w-title">Criteria weights</h2></div>
+      <div class="presets">
+        <span class="presets-label">Scenario presets</span>
+        <div class="seg" id="presets"></div>
+      </div>
+      <div class="sliders" id="sliders"></div>
+      <div class="total" id="total"><span>Total weight</span><b class="num" id="total-val">100%</b></div>
+      <p class="total-note" id="total-note"></p>
+      <div class="actions">
+        <button type="button" class="primary" id="btn-balance">Rebalance to 100%</button>
+        <button type="button" id="btn-reset">Reset</button>
+      </div>
+    </section>
+
+    <!-- Live ranking -->
+    <section class="panel" aria-labelledby="r-title">
+      <div class="panel-head">
+        <h2 id="r-title">Ranking</h2>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr id="thead-row"></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="foot"><span id="data-note"></span><span id="author"></span></div>
+    </section>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   APP LOGIC. You should not need to edit below this line.
+   Sections: 1 Setup · 2 Normalisation · 3 Scoring · 4 Sensitivity
+             5 Rendering · 6 Event handling
+   ===================================================================== */
+
+/* ---------- 1. SETUP ---------- */
+const C = CONFIG.criteria;
+const M = CONFIG.markets;
+const S = CONFIG.scenarios;
+const COLORS = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)", "var(--c5)"];
+const DEFAULT_WEIGHTS = S[0].weights.slice();   // first scenario = default, used by "Reset" and rank arrows
+let weights = DEFAULT_WEIGHTS.slice();          // current slider values (in %)
+
+const $ = id => document.getElementById(id);
+const fmt = (n, d = 1) => n.toFixed(d);
+const sum = a => a.reduce((x, y) => x + y, 0);
+const near = (a, b) => Math.abs(a - b) < 1e-6;   // float-safe equality (weights can be 12.5 etc.)
+const fmtW = w => (Number.isInteger(w) ? w : w.toFixed(1)) + "%";
+
+/* Raw value of every criterion for every market (RAW[i][k]).
+   This is where derived metrics like EVs per charger are calculated. */
+const RAW = M.map(m => C.map(c => Number(c.value(m))));
+
+/* ---------- 2. MIN-MAX NORMALISATION ----------
+   For each criterion: norm = (value - min) / (max - min), so the worst
+   market gets 0 and the best gets 1. If lower is better, we flip it
+   (1 - norm), which equals (max - value) / (max - min), the same as the
+   Excel run-cost formula. If every market has the same value, the
+   criterion cannot separate them, so everyone gets 0.5. This runs once,
+   because the normalised values do not depend on the weights.         */
+const NORM = M.map(() => []);
+C.forEach((c, k) => {
+  const vals = RAW.map(r => r[k]);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  RAW.forEach((r, i) => {
+    let n = max === min ? 0.5 : (r[k] - min) / (max - min);
+    if (!c.higherIsBetter) n = 1 - n;
+    NORM[i][k] = n;
+  });
+});
+
+/* ---------- 3. WEIGHTED SCORING ----------
+   Weights are first rescaled so they sum to 1. This means the tool still
+   works when the sliders do not add up to 100%: it uses each weight's
+   share of the total. Score = sum(weight share x normalised value) x 100,
+   which is the SUMPRODUCT in the Excel model. Returns markets sorted from
+   highest to lowest score.                                             */
+function shares(w) {
+  const total = sum(w);
+  return total === 0 ? w.map(() => 0) : w.map(x => x / total);
+}
+function rank(w) {
+  const s = shares(w);
+  return M.map((m, i) => {
+    const parts = C.map((c, k) => s[k] * NORM[i][k] * 100);  // points contributed by each criterion
+    return { idx: i, name: m.name, parts, score: sum(parts) };
+  }).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+}
+const BASELINE = rank(DEFAULT_WEIGHTS).map(r => r.idx);  // default ranking, for the change arrows
+
+/* ---------- 4. SENSITIVITY TEST ----------
+   Question: does the #1 market survive small changes in the weights?
+   For each criterion we move its weight up and down by `step` points
+   (keeping the total at 100 by scaling the other weights proportionally)
+   and re-rank. That is 2 x 5 = 10 scenarios. We count how many of them
+   produce a different #1.
+     0 flips      -> Stable
+     1 to 3 flips -> Sensitive
+     4+ flips     -> Fragile                                             */
+function sensitivity(w) {
+  const step = CONFIG.sensitivityStep;
+  const base = shares(w).map(x => x * 100);   // current weights expressed on a 100 scale
+  const leader = rank(base)[0].idx;
+  const flips = [];
+  C.forEach((c, k) => {
+    [step, -step].forEach(d => {
+      const target = Math.min(100, Math.max(0, base[k] + d));
+      if (near(target, base[k])) return;      // weight already at 0 or 100
+      const othersSum = 100 - base[k];
+      const test = base.map((x, j) => {
+        if (j === k) return target;
+        // spread the remaining (100 - target) across the others in proportion
+        return othersSum > 0 ? x * (100 - target) / othersSum : (100 - target) / (C.length - 1);
+      });
+      const newLeader = rank(test)[0];
+      if (newLeader.idx !== leader) flips.push({ crit: c.name, d, to: newLeader.name });
+    });
+  });
+  return { flips, scenarios: C.length * 2 };
+}
+
+/* ---------- 5. RENDERING ---------- */
+function buildStatic() {
+  document.title = CONFIG.title;
+  $("app-title").textContent = CONFIG.title;
+  $("app-sub").textContent = CONFIG.subtitle;
+  $("data-note").textContent = CONFIG.dataNote;
+  $("author").textContent = CONFIG.author ? "Built by " + CONFIG.author : "";
+
+  // One button per weighting scenario
+  $("presets").innerHTML = S.map((s, j) =>
+    `<button type="button" data-s="${j}" aria-pressed="false">${s.name}</button>`).join("");
+
+  // One slider per criterion (0.5-point steps so weights like 12.5% work)
+  $("sliders").innerHTML = C.map((c, k) => `
+    <div class="slider">
+      <div class="slider-top">
+        <label class="slider-name" for="w-${c.id}"><span class="swatch" style="background:${COLORS[k % 5]}"></span>${c.name}</label>
+        <span class="slider-val num" id="v-${c.id}"></span>
+      </div>
+      <input type="range" id="w-${c.id}" min="0" max="100" step="0.5" value="${weights[k]}" data-k="${k}"
+             aria-describedby="u-${c.id}">
+      <span class="slider-unit" id="u-${c.id}">${c.unit} · ${c.higherIsBetter ? "higher is better" : "lower is better"}</span>
+    </div>`).join("");
+
+  // Colour legend for the stacked score bars
+  $("legend").innerHTML = C.map((c, k) =>
+    `<span><span class="swatch" style="background:${COLORS[k % 5]}"></span>${c.name}</span>`).join("");
+
+  // Table header: rank, market, change, score, then one raw-value column per criterion
+  $("thead-row").innerHTML =
+    `<th>#</th><th>Market</th><th>vs ${S[0].name}</th><th>Weighted score</th>` +
+    C.map(c => `<th class="r col-raw">${c.name}<span class="dir">${c.unit}</span></th>`).join("");
+}
+
+function render() {
+  const total = sum(weights);
+  const ranked = rank(weights);
+
+  // Highlight the preset button if the sliders match one exactly
+  document.querySelectorAll("#presets button").forEach(b => {
+    const match = S[+b.dataset.s].weights.every((w, k) => near(w, weights[k]));
+    b.setAttribute("aria-pressed", String(match));
+  });
+
+  // Slider labels and screen-reader text
+  const s = shares(weights);
+  C.forEach((c, k) => {
+    $("v-" + c.id).textContent = fmtW(weights[k]);
+    $("w-" + c.id).setAttribute("aria-valuetext", `${weights[k]} percent, effective ${fmt(s[k] * 100)} percent`);
+  });
+
+  // Total box: green at exactly 100, amber otherwise, with an explanation
+  const ok = near(total, 100);
+  $("total").className = "total " + (ok ? "ok" : "warn");
+  $("total-val").textContent = fmtW(total);
+  $("total-note").textContent = total === 0
+    ? "All weights are 0. Set at least one weight to rank markets."
+    : ok ? "Weights sum to 100%."
+         : `Scores use each weight's share of ${fmtW(total)} (rescaled to 100%). Rebalance to make the sliders match.`;
+  $("btn-balance").disabled = ok || total === 0;
+
+  // Nothing to rank if all weights are zero
+  if (total === 0) {
+    $("win-name").textContent = "No weights set";
+    $("win-score").textContent = "–"; $("win-why").textContent = ""; $("scen-ranks").innerHTML = "";
+    $("lead").textContent = "–"; $("flips").innerHTML = "";
+    $("sens-pill").className = "pill warn"; $("sens-pill").textContent = "n/a";
+    $("tbody").innerHTML = ""; return;
+  }
+
+  // Answer-first banner
+  const top = ranked[0], second = ranked[1];
+  $("win-name").textContent = top.name;
+  $("win-score").textContent = fmt(top.score);
+  const best = top.parts.indexOf(Math.max(...top.parts));
+  $("win-why").textContent = `Largest contributor: ${C[best].name} (${fmt(top.parts[best])} of ${fmt(top.score)} points).`;
+  $("lead").textContent = second ? `+${fmt(top.score - second.score)} pts over ${second.name}` : "–";
+
+  // Where the current #1 ranks under each preset scenario
+  $("scen-ranks").innerHTML = S.map(sc => {
+    const pos = rank(sc.weights).findIndex(r => r.idx === top.idx) + 1;
+    return `<span class="chip">${sc.name}: <b>#${pos}</b></span>`;
+  }).join("");
+
+  // Sensitivity pill and list of the shifts that would change #1
+  const sens = sensitivity(weights);
+  const n = sens.flips.length;
+  const pill = $("sens-pill");
+  if (n === 0)      { pill.className = "pill ok";   pill.textContent = "Stable"; }
+  else if (n <= 3)  { pill.className = "pill warn"; pill.textContent = "Sensitive"; }
+  else              { pill.className = "pill bad";  pill.textContent = "Fragile"; }
+  const step = CONFIG.sensitivityStep;
+  $("flips").innerHTML = n === 0
+    ? `<li>#1 holds in all ${sens.scenarios} scenarios where one weight moves ±${step} pts.</li>`
+    : `<li>#1 changes in ${n} of ${sens.scenarios} ±${step} pt scenarios:</li>` +
+      sens.flips.slice(0, 4).map(f => `<li><b>${f.crit} ${f.d > 0 ? "+" : "−"}${step}</b> → ${f.to}</li>`).join("") +
+      (n > 4 ? `<li>and ${n - 4} more</li>` : "");
+
+  // Ranking table rows
+  $("tbody").innerHTML = ranked.map((r, pos) => {
+    const was = BASELINE.indexOf(r.idx);
+    const move = was - pos;   // positive = moved up versus the default scenario
+    const delta = move > 0 ? `<span class="delta up">▲ ${move}</span>`
+                : move < 0 ? `<span class="delta down">▼ ${-move}</span>`
+                : `<span class="delta same">–</span>`;
+    const bar = r.parts.map((p, k) =>
+      `<i style="width:${p}%;background:${COLORS[k % 5]}" title="${C[k].name}: ${fmt(p)} pts"></i>`).join("");
+    const raws = C.map((c, k) =>
+      `<td class="r raw num col-raw" title="normalised score ${fmt(NORM[r.idx][k] * 100)}">${c.format(RAW[r.idx][k])}</td>`).join("");
+    return `<tr class="${pos === 0 ? "top" : ""}">
+      <td class="rank num">${pos + 1}</td>
+      <td class="market">${r.name}</td>
+      <td>${delta}</td>
+      <td class="scorecell"><div class="score-wrap"><div class="bar" aria-hidden="true">${bar}</div><span class="score-num num">${fmt(r.score)}</span></div></td>
+      ${raws}</tr>`;
+  }).join("");
+}
+
+/* ---------- 6. EVENT HANDLING ---------- */
+// Any slider move updates that weight and re-renders everything live
+$("sliders").addEventListener("input", e => {
+  if (e.target.type !== "range") return;
+  weights[+e.target.dataset.k] = +e.target.value;
+  render();
+});
+
+// Preset buttons load a scenario's weights
+$("presets").addEventListener("click", e => {
+  const b = e.target.closest("button[data-s]");
+  if (b) setWeights(S[+b.dataset.s].weights.slice());
+});
+
+// Scale all weights proportionally so they sum to exactly 100, in
+// 0.5-point steps (rounding leftovers go to the largest remainders).
+$("btn-balance").addEventListener("click", () => {
+  const total = sum(weights);
+  if (!total) return;
+  const raw = weights.map(w => w * 200 / total);   // work in half-points: 200 units = 100%
+  const out = raw.map(Math.floor);
+  let left = 200 - sum(out);
+  raw.map((x, k) => [x - Math.floor(x), k]).sort((a, b) => b[0] - a[0])
+     .forEach(([, k]) => { if (left > 0) { out[k]++; left--; } });
+  setWeights(out.map(u => u / 2));
+});
+
+$("btn-reset").addEventListener("click", () => setWeights(DEFAULT_WEIGHTS.slice()));
+
+function setWeights(w) {
+  weights = w;
+  C.forEach((c, k) => { $("w-" + c.id).value = w[k]; });
+  render();
+}
+
+buildStatic();
+render();
+</script>
+</body>
+</html>
